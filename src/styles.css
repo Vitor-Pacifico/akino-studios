@@ -379,6 +379,90 @@ input[type=file] {
     margin-top: 18px
 }
 
+.calendar-heading {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    margin: 18px 0 12px;
+    font-family: system-ui, sans-serif
+}
+
+.calendar-heading h3 {
+    margin: 0;
+    text-transform: capitalize
+}
+
+.calendar-arrow {
+    flex: 0 0 42px;
+    width: 42px;
+    padding: 8px;
+    font-size: 1.2rem
+}
+
+.calendar-grid {
+    display: grid;
+    grid-template-columns: repeat(7, minmax(0, 1fr));
+    gap: 5px;
+    font-family: system-ui, sans-serif;
+    text-align: center
+}
+
+.calendar-weekday {
+    padding: 6px 0;
+    color: var(--muted);
+    font-size: .78rem
+}
+
+.calendar-day,
+.calendar-empty {
+    min-width: 0;
+    min-height: 42px
+}
+
+.calendar-day {
+    position: relative;
+    padding: 6px;
+    border: 1px solid var(--line);
+    background: var(--bg);
+    color: var(--text);
+    font-size: .9rem
+}
+
+.calendar-day span {
+    position: absolute;
+    right: 5px;
+    top: 0;
+    color: var(--accent)
+}
+
+.calendar-day.has-blocks {
+    border-color: var(--accent)
+}
+
+.calendar-day.selected {
+    background: var(--accent);
+    color: var(--accent-text)
+}
+
+.calendar-day.selected span {
+    color: var(--accent-text)
+}
+
+.block-actions {
+    margin-top: 18px;
+    padding-top: 6px;
+    border-top: 1px solid var(--line)
+}
+
+.block-actions > button {
+    margin-top: 10px
+}
+
+.block-item {
+    align-items: center
+}
+
 .agenda-item {
     display: flex;
     justify-content: space-between;

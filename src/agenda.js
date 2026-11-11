@@ -1,5 +1,6 @@
 import {
   addDoc,
+  writeBatch,
   collection,
   doc,
   getDocs,
@@ -9,26 +10,20 @@ import {
   where,
 } from "firebase/firestore";
 import { db } from "./firebase.js";
-
-const minutes = (time) => {
-  const [hours, mins] = time.split(":").map(Number);
-  return hours * 60 + mins;
-};
-
-const overlaps = (startA, endA, startB, endB) =>
-  minutes(startA) < minutes(endB) && minutes(endA) > minutes(startB);
+import { conflita, estaLivre, gerarHorarios, HORA_FIM, HORA_INICIO } from "./horarios.js";
 
 const scheduleDayRef = (date) => doc(db, "scheduleDays", date);
+const appointmentBlockId = (appointmentId) => `appointment_${appointmentId}`;
 
 async function getDayRecords(transaction, date) {
   await transaction.get(scheduleDayRef(date));
 
   // Queries are read separately; the shared day document makes same-day writes retry together.
-  const [appointments, availability] = await Promise.all([
+  const [appointments, blocks] = await Promise.all([
     getDocs(query(collection(db, "appointments"), where("date", "==", date))),
-    getDocs(query(collection(db, "availability"), where("date", "==", date))),
+    getDocs(query(collection(db, "bloqueios"), where("date", "==", date))),
   ]);
-  return { appointments, availability };
+  return { appointments, blocks };
 }
 
 function markDayChanged(transaction, date) {
@@ -36,11 +31,15 @@ function markDayChanged(transaction, date) {
 }
 
 export async function getAvailableSlots(date) {
-  const result = await getDocs(
-    query(collection(db, "availability"), where("date", "==", date), where("available", "==", true)),
-  );
-  return result.docs.map((snapshot) => ({ id: snapshot.id, ...snapshot.data() }))
-    .sort((a, b) => a.start.localeCompare(b.start));
+  const result = await getDocs(query(collection(db, "bloqueios"), where("date", "==", date)));
+  const blocks = result.docs.map((snapshot) => snapshot.data());
+  const now = new Date();
+  const today = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
+  const currentTime = `${String(now.getHours()).padStart(2, "0")}:${String(now.getMinutes()).padStart(2, "0")}`;
+  return gerarHorarios()
+    .filter((start) => date > today || (date === today && start > currentTime))
+    .filter((start) => estaLivre(date, start, `${String(Number(start.slice(0, 2)) + 1).padStart(2, "0")}:00`, blocks))
+    .map((start) => ({ id: `${date}_${start}`, date, start }));
 }
 
 export async function createBookingRequest(booking) {
@@ -57,42 +56,110 @@ export async function getStudioData() {
     getDocs(collection(db, "appointments")),
   ]);
 
+  const confirmedAppointments = appointments.docs
+    .filter((snapshot) => snapshot.data().status === "confirmed")
+    .map((snapshot) => ({ id: snapshot.id, ...snapshot.data() }));
+  const existingAppointmentBlocks = await getDocs(
+    query(collection(db, "bloqueios"), where("type", "==", "appointment")),
+  );
+  const knownBlockIds = new Set(existingAppointmentBlocks.docs.map((snapshot) => snapshot.id));
+  const missingBlocks = confirmedAppointments.filter(
+    (appointment) => !knownBlockIds.has(appointmentBlockId(appointment.id)),
+  );
+
+  for (let index = 0; index < missingBlocks.length; index += 450) {
+    const batch = writeBatch(db);
+    missingBlocks.slice(index, index + 450).forEach((appointment) => {
+      batch.set(doc(db, "bloqueios", appointmentBlockId(appointment.id)), {
+        date: appointment.date,
+        start: appointment.start,
+        end: appointment.end,
+        type: "appointment",
+      });
+    });
+    await batch.commit();
+  }
+
   return {
     requests: requests.docs.map((snapshot) => ({ id: snapshot.id, ...snapshot.data() }))
       .sort((a, b) => `${a.date} ${a.start}`.localeCompare(`${b.date} ${b.start}`)),
     appointments: appointments.docs.map((snapshot) => ({ id: snapshot.id, ...snapshot.data() }))
       .sort((a, b) => `${a.date} ${a.start}`.localeCompare(`${b.date} ${b.start}`)),
+    migratedAppointmentBlocks: missingBlocks.length > 0,
   };
 }
 
-export async function getSlotsForDate(date) {
-  const result = await getDocs(query(collection(db, "availability"), where("date", "==", date)));
-  return result.docs.map((snapshot) => ({ id: snapshot.id, ...snapshot.data() }))
-    .sort((a, b) => a.start.localeCompare(b.start));
+export async function getScheduleForDate(date) {
+  const result = await getDocs(query(collection(db, "bloqueios"), where("date", "==", date)));
+  const blocks = result.docs.map((snapshot) => ({ id: snapshot.id, ...snapshot.data() }));
+  const slots = gerarHorarios().map((start) => {
+    const end = `${String(Number(start.slice(0, 2)) + 1).padStart(2, "0")}:00`;
+    const conflicts = blocks.filter((block) => conflita(start, end, block));
+    const status = conflicts.some((block) => block.type === "appointment")
+      ? "appointment"
+      : conflicts.length
+        ? "blocked"
+        : "available";
+    return { id: `${date}_${start}`, start, status };
+  });
+  return { slots, blocks };
 }
 
-export async function addAvailabilitySlot(date, start) {
-  const slotId = `${date}_${start}`;
-  const slotRef = doc(db, "availability", slotId);
+export async function getBlocksForMonth(year, month) {
+  const dateKey = (day) =>
+    `${year}-${String(month).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
+  const lastDay = new Date(year, month, 0).getDate();
+  const result = await getDocs(query(
+    collection(db, "bloqueios"),
+    where("date", ">=", dateKey(1)),
+    where("date", "<=", dateKey(lastDay)),
+  ));
+  return result.docs.map((snapshot) => ({ id: snapshot.id, ...snapshot.data() }));
+}
 
+export async function addScheduleBlock(date, start, end) {
+  if (start < `${String(HORA_INICIO).padStart(2, "0")}:00` ||
+      end > `${String(HORA_FIM).padStart(2, "0")}:00` ||
+      end <= start) {
+    throw new Error("O bloqueio deve ficar entre 08:00 e 22:00, com término depois do início.");
+  }
+
+  const blockRef = doc(collection(db, "bloqueios"));
   await runTransaction(db, async (transaction) => {
-    const [existing, dayRecords] = await Promise.all([
-      transaction.get(slotRef),
-      getDayRecords(transaction, date),
-    ]);
-    if (existing.exists() && existing.data().available) {
-      throw new Error("Esse horário já está na lista de disponíveis.");
-    }
-
-    const alreadyBooked = dayRecords.appointments.docs.some((snapshot) => {
+    const dayRecords = await getDayRecords(transaction, date);
+    const appointmentConflict = dayRecords.appointments.docs.some((snapshot) => {
       const appointment = snapshot.data();
-      return appointment.status === "confirmed" &&
-        minutes(start) >= minutes(appointment.start) && minutes(start) < minutes(appointment.end);
+      return appointment.status === "confirmed" && conflita(start, end, appointment);
     });
-    if (alreadyBooked) throw new Error("Esse início está dentro do período de um agendamento confirmado.");
+    const blockConflict = dayRecords.blocks.docs.some((snapshot) =>
+      conflita(start, end, snapshot.data())
+    );
+    if (appointmentConflict) throw new Error("Esse intervalo sobrepõe um agendamento confirmado.");
+    if (blockConflict) throw new Error("Esse intervalo já está bloqueado ou ocupado.");
 
     markDayChanged(transaction, date);
-    transaction.set(slotRef, { date, start, available: true, createdAt: serverTimestamp() });
+    transaction.set(blockRef, {
+      date,
+      start,
+      end,
+      type: "manual",
+      createdAt: serverTimestamp(),
+    });
+  });
+}
+
+export async function removeScheduleBlock(blockId) {
+  const blockRef = doc(db, "bloqueios", blockId);
+  await runTransaction(db, async (transaction) => {
+    const blockSnapshot = await transaction.get(blockRef);
+    if (!blockSnapshot.exists() || blockSnapshot.data().type !== "manual") {
+      throw new Error("Esse bloqueio não existe ou não pode ser removido por aqui.");
+    }
+
+    const date = blockSnapshot.data().date;
+    await getDayRecords(transaction, date);
+    markDayChanged(transaction, date);
+    transaction.delete(blockRef);
   });
 }
 
@@ -107,25 +174,24 @@ export async function submitAppointmentRequest(requestId, end) {
     }
 
     const request = requestSnapshot.data();
-    const slotRef = doc(db, "availability", request.slotId);
-    const [slotSnapshot, dayRecords] = await Promise.all([
-      transaction.get(slotRef),
-      getDayRecords(transaction, request.date),
-    ]);
-
-    if (!slotSnapshot.exists() || !slotSnapshot.data().available) {
-      throw new Error("Esse horário já não está livre. Atualize os horários disponíveis.");
+    const dayRecords = await getDayRecords(transaction, request.date);
+    if (request.start < `${String(HORA_INICIO).padStart(2, "0")}:00` ||
+        request.start >= `${String(HORA_FIM).padStart(2, "0")}:00`) {
+      throw new Error("O horário inicial precisa ficar entre 08:00 e 22:00.");
     }
-    if (minutes(end) <= minutes(request.start) || minutes(end) > 20 * 60) {
-      throw new Error("Escolha um término depois do início e até as 20:00.");
+    if (end <= request.start || end > `${String(HORA_FIM).padStart(2, "0")}:00`) {
+      throw new Error("Escolha um término depois do início e até as 22:00.");
     }
 
-    const conflicts = dayRecords.appointments.docs.some((snapshot) => {
+    const appointmentConflict = dayRecords.appointments.docs.some((snapshot) => {
       const appointment = snapshot.data();
       return appointment.status === "confirmed" &&
-        overlaps(request.start, end, appointment.start, appointment.end);
+        conflita(request.start, end, appointment);
     });
-    if (conflicts) {
+    const blockConflict = dayRecords.blocks.docs.some((snapshot) =>
+      conflita(request.start, end, snapshot.data())
+    );
+    if (appointmentConflict || blockConflict) {
       throw new Error("Já existe um agendamento confirmado nesse intervalo.");
     }
 
@@ -143,14 +209,13 @@ export async function submitAppointmentRequest(requestId, end) {
       source: "online",
       createdAt: serverTimestamp(),
     });
+    transaction.set(doc(db, "bloqueios", appointmentBlockId(appointmentRef.id)), {
+      date: request.date,
+      start: request.start,
+      end,
+      type: "appointment",
+    });
     transaction.update(requestRef, { status: "approved", appointmentId: appointmentRef.id });
-
-    for (const snapshot of dayRecords.availability.docs) {
-      const slot = snapshot.data();
-      if (slot.available && minutes(slot.start) >= minutes(request.start) && minutes(slot.start) < minutes(end)) {
-        transaction.update(snapshot.ref, { available: false });
-      }
-    }
     markDayChanged(transaction, request.date);
   });
 }
@@ -172,12 +237,17 @@ export async function addManualAppointment(appointment) {
   await runTransaction(db, async (transaction) => {
     const dayRecords = await getDayRecords(transaction, appointment.date);
 
-    const conflicts = dayRecords.appointments.docs.some((snapshot) => {
+    const appointmentConflict = dayRecords.appointments.docs.some((snapshot) => {
       const existing = snapshot.data();
       return existing.status === "confirmed" &&
-        overlaps(appointment.start, appointment.end, existing.start, existing.end);
+        conflita(appointment.start, appointment.end, existing);
     });
-    if (conflicts) throw new Error("Esse período conflita com outro agendamento confirmado.");
+    const blockConflict = dayRecords.blocks.docs.some((snapshot) =>
+      conflita(appointment.start, appointment.end, snapshot.data())
+    );
+    if (appointmentConflict || blockConflict) {
+      throw new Error("Esse período conflita com outro agendamento ou bloqueio.");
+    }
 
     markDayChanged(transaction, appointment.date);
     transaction.set(appointmentRef, {
@@ -186,13 +256,12 @@ export async function addManualAppointment(appointment) {
       source: "manual",
       createdAt: serverTimestamp(),
     });
-
-    for (const snapshot of dayRecords.availability.docs) {
-      const slot = snapshot.data();
-      if (slot.available && minutes(slot.start) >= minutes(appointment.start) && minutes(slot.start) < minutes(appointment.end)) {
-        transaction.update(snapshot.ref, { available: false });
-      }
-    }
+    transaction.set(doc(db, "bloqueios", appointmentBlockId(appointmentRef.id)), {
+      date: appointment.date,
+      start: appointment.start,
+      end: appointment.end,
+      type: "appointment",
+    });
   });
 }
 
@@ -207,24 +276,11 @@ export async function cancelAppointment(appointmentId) {
 
     const appointment = snapshot.data();
     const dayRecords = await getDayRecords(transaction, appointment.date);
+    const blockRef = doc(db, "bloqueios", appointmentBlockId(appointmentId));
+    await transaction.get(blockRef);
 
     markDayChanged(transaction, appointment.date);
     transaction.update(appointmentRef, { status: "cancelled" });
-
-    for (const slotSnapshot of dayRecords.availability.docs) {
-      const slot = slotSnapshot.data();
-      if (slot.available || minutes(slot.start) < minutes(appointment.start) || minutes(slot.start) >= minutes(appointment.end)) {
-        continue;
-      }
-
-      const stillBooked = dayRecords.appointments.docs.some((otherSnapshot) => {
-        if (otherSnapshot.id === appointmentId) return false;
-        const other = otherSnapshot.data();
-        return other.status === "confirmed" &&
-          minutes(slot.start) >= minutes(other.start) && minutes(slot.start) < minutes(other.end);
-      });
-
-      if (!stillBooked) transaction.update(slotSnapshot.ref, { available: true });
-    }
+    transaction.delete(blockRef);
   });
 }

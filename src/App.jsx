@@ -2,11 +2,13 @@ import { useEffect, useMemo, useState } from "react";
 import { onAuthStateChanged, signInWithEmailAndPassword, signOut } from "firebase/auth";
 import { auth } from "./firebase.js";
 import {
+  addScheduleBlock,
   addManualAppointment,
-  addAvailabilitySlot,
   cancelAppointment,
-  getSlotsForDate,
+  getBlocksForMonth,
+  getScheduleForDate,
   getStudioData,
+  removeScheduleBlock,
   rejectBookingRequest,
   submitAppointmentRequest,
 } from "./agenda.js";
@@ -18,6 +20,16 @@ const hoje = () => {
   const date = new Date();
   return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
 };
+
+const mesDaData = (date) => {
+  const [year, month] = date.split("-").map(Number);
+  return new Date(year, month - 1, 1);
+};
+
+const chaveData = (year, month, day) =>
+  `${year}-${String(month).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
+
+const diasSemana = ["Dom", "Seg", "Ter", "Qua", "Qui", "Sex", "Sáb"];
 
 const inicial = {
   nome: "",
@@ -47,9 +59,11 @@ export default function App() {
   const [loginError, setLoginError] = useState("");
   const [requests, setRequests] = useState([]);
   const [appointments, setAppointments] = useState([]);
-  const [slots, setSlots] = useState([]);
+  const [daySchedule, setDaySchedule] = useState({ slots: [], blocks: [] });
+  const [monthBlocks, setMonthBlocks] = useState([]);
   const [studioDate, setStudioDate] = useState(hoje());
-  const [newSlotTime, setNewSlotTime] = useState("");
+  const [calendarMonth, setCalendarMonth] = useState(() => mesDaData(hoje()));
+  const [blockForm, setBlockForm] = useState({ start: "08:00", end: "12:00" });
   const [appointmentForm, setAppointmentForm] = useState({ name: "", phone: "", date: hoje(), start: "", end: "", description: "" });
   const [durations, setDurations] = useState({});
   const [studioTab, setStudioTab] = useState("agenda");
@@ -67,6 +81,8 @@ export default function App() {
     if (!user) {
       setRequests([]);
       setAppointments([]);
+      setDaySchedule({ slots: [], blocks: [] });
+      setMonthBlocks([]);
       return;
     }
     let active = true;
@@ -75,6 +91,9 @@ export default function App() {
         if (!active) return;
         setRequests(data.requests);
         setAppointments(data.appointments);
+        if (data.migratedAppointmentBlocks) {
+          setRefresh((value) => value + 1);
+        }
         setError("");
       })
       .catch((loadError) => { if (active) setError(mensagemErro(loadError)); });
@@ -84,11 +103,36 @@ export default function App() {
   useEffect(() => {
     if (!user) return;
     let active = true;
-    getSlotsForDate(studioDate)
-      .then((result) => { if (active) setSlots(result); })
+    getScheduleForDate(studioDate)
+      .then((result) => { if (active) setDaySchedule(result); })
       .catch((loadError) => { if (active) setError(mensagemErro(loadError)); });
     return () => { active = false; };
   }, [user, studioDate, refresh]);
+
+  useEffect(() => {
+    if (!user) return;
+    let active = true;
+    getBlocksForMonth(calendarMonth.getFullYear(), calendarMonth.getMonth() + 1)
+      .then((result) => { if (active) setMonthBlocks(result); })
+      .catch((loadError) => { if (active) setError(mensagemErro(loadError)); });
+    return () => { active = false; };
+  }, [user, calendarMonth, refresh]);
+
+  const calendarDays = useMemo(() => {
+    const year = calendarMonth.getFullYear();
+    const month = calendarMonth.getMonth();
+    const leadingDays = new Date(year, month, 1).getDay();
+    const daysInMonth = new Date(year, month + 1, 0).getDate();
+    return [
+      ...Array(leadingDays).fill(null),
+      ...Array.from({ length: daysInMonth }, (_, index) => chaveData(year, month + 1, index + 1)),
+    ];
+  }, [calendarMonth]);
+
+  const daysWithBlocks = useMemo(
+    () => new Set(monthBlocks.map((block) => block.date)),
+    [monthBlocks],
+  );
 
   const confirmedAppointments = useMemo(
     () => appointments.filter((appointment) => appointment.status === "confirmed"),
@@ -97,6 +141,17 @@ export default function App() {
 
   function setFormField(field, value) {
     setForm((current) => ({ ...current, [field]: value }));
+  }
+
+  function changeStudioDate(date) {
+    setStudioDate(date);
+    if (date) setCalendarMonth(mesDaData(date));
+  }
+
+  function changeCalendarMonth(amount) {
+    const next = new Date(calendarMonth.getFullYear(), calendarMonth.getMonth() + amount, 1);
+    setCalendarMonth(next);
+    setStudioDate(chaveData(next.getFullYear(), next.getMonth() + 1, 1));
   }
 
   async function login(event) {
@@ -128,17 +183,31 @@ export default function App() {
     }
   }
 
-  async function saveAvailability(event) {
+  async function saveBlock(event) {
     event.preventDefault();
-    if (!newSlotTime || newSlotTime < "08:00" || newSlotTime >= "20:00") {
-      setError("Escolha um início entre 08:00 e 19:59.");
+    if (studioDate < hoje()) {
+      setError("Escolha uma data de hoje em diante para criar um bloqueio.");
+      return;
+    }
+    if (blockForm.start < "08:00" || blockForm.end > "22:00" || blockForm.end <= blockForm.start) {
+      setError("Escolha um intervalo entre 08:00 e 22:00, com término depois do início.");
       return;
     }
     await runStudioAction(
-      () => addAvailabilitySlot(studioDate, newSlotTime),
-      `Horário ${newSlotTime} adicionado à disponibilidade.`,
+      () => addScheduleBlock(studioDate, blockForm.start, blockForm.end),
+      `Bloqueio de ${blockForm.start} a ${blockForm.end} adicionado.`,
     );
-    setNewSlotTime("");
+  }
+
+  async function blockWholeDay() {
+    if (studioDate < hoje()) {
+      setError("Escolha uma data de hoje em diante para criar um bloqueio.");
+      return;
+    }
+    await runStudioAction(
+      () => addScheduleBlock(studioDate, "08:00", "22:00"),
+      "Dia inteiro bloqueado.",
+    );
   }
 
   async function approve(request) {
@@ -160,8 +229,8 @@ export default function App() {
       setError("Preencha nome, data, início e término do atendimento.");
       return;
     }
-    if (start < "08:00" || end > "20:00" || end <= start) {
-      setError("O atendimento deve começar a partir das 08:00 e terminar depois do início, até as 20:00.");
+    if (start < "08:00" || end > "22:00" || end <= start) {
+      setError("O atendimento deve começar a partir das 08:00 e terminar depois do início, até as 22:00.");
       return;
     }
     await runStudioAction(() => addManualAppointment({
@@ -249,7 +318,7 @@ export default function App() {
                     </div>
                     <div className="request-actions">
                       <label htmlFor={`end-${request.id}`}>Término estimado</label>
-                      <input id={`end-${request.id}`} type="time" min={request.start} max="20:00" value={durations[request.id] || ""} onChange={(event) => setDurations((current) => ({ ...current, [request.id]: event.target.value }))} />
+                      <input id={`end-${request.id}`} type="time" min={request.start} max="22:00" value={durations[request.id] || ""} onChange={(event) => setDurations((current) => ({ ...current, [request.id]: event.target.value }))} />
                       <button type="button" disabled={busy} onClick={() => approve(request)}>Aprovar</button>
                       <button type="button" className="btn-danger" disabled={busy} onClick={() => runStudioAction(() => rejectBookingRequest(request.id), "Pedido recusado.")}>Recusar</button>
                     </div>
@@ -259,7 +328,7 @@ export default function App() {
 
               <section className="card">
                 <label htmlFor="agenda-date">Ver agenda do dia</label>
-                <input id="agenda-date" type="date" value={studioDate} onChange={(event) => setStudioDate(event.target.value)} />
+                <input id="agenda-date" type="date" value={studioDate} onChange={(event) => changeStudioDate(event.target.value)} />
                 <h2 className="section-title">Agendamentos de {studioDate}</h2>
                 {todaysAppointments.length === 0 && <p className="muted">Nenhum atendimento confirmado neste dia.</p>}
                 {todaysAppointments.map((appointment) => (
@@ -284,22 +353,66 @@ export default function App() {
 
           {studioTab === "disponibilidade" && (
             <section className="card">
-              <h2>Definir horários para agendamento</h2>
-              <p className="muted">Cadastre os inícios livres do dia. Horários entre 08:00 e 20:00; a duração é definida ao aprovar o pedido.</p>
-              <label htmlFor="availability-date">Data</label>
-              <input id="availability-date" type="date" min={hoje()} value={studioDate} onChange={(event) => setStudioDate(event.target.value)} />
-              <form className="inline-form" onSubmit={saveAvailability}>
-                <div>
-                  <label htmlFor="slot-time">Horário de início</label>
-                  <input id="slot-time" type="time" min="08:00" max="19:59" required value={newSlotTime} onChange={(event) => setNewSlotTime(event.target.value)} />
-                </div>
-                <button type="submit" disabled={busy}>Adicionar horário</button>
-              </form>
-              <h3>Horários de {studioDate}</h3>
-              {slots.length === 0 && <p className="muted">Nenhum horário cadastrado para esta data.</p>}
+              <h2>Agenda e bloqueios</h2>
+              <p className="muted">Os inícios são gerados automaticamente de hora em hora, das 08:00 às 21:00. Agendamentos e bloqueios deixam os intervalos correspondentes indisponíveis.</p>
+              <div className="calendar-heading">
+                <button type="button" className="nav-secondary calendar-arrow" aria-label="Mês anterior" onClick={() => changeCalendarMonth(-1)}>‹</button>
+                <h3>{calendarMonth.toLocaleDateString("pt-BR", { month: "long", year: "numeric" })}</h3>
+                <button type="button" className="nav-secondary calendar-arrow" aria-label="Próximo mês" onClick={() => changeCalendarMonth(1)}>›</button>
+              </div>
+              <div className="calendar-grid" role="group" aria-label="Calendário do mês">
+                {diasSemana.map((day) => <span className="calendar-weekday" key={day}>{day}</span>)}
+                {calendarDays.map((date, index) => date ? (
+                  <button
+                    type="button"
+                    key={date}
+                    className={`calendar-day${studioDate === date ? " selected" : ""}${daysWithBlocks.has(date) ? " has-blocks" : ""}`}
+                    aria-pressed={studioDate === date}
+                    aria-label={`${date}${daysWithBlocks.has(date) ? ", com horários ocupados ou bloqueados" : ""}`}
+                    onClick={() => setStudioDate(date)}
+                  >
+                    {Number(date.slice(-2))}
+                    {daysWithBlocks.has(date) && <span aria-hidden="true">•</span>}
+                  </button>
+                ) : <span className="calendar-empty" key={`empty-${index}`} />)}
+              </div>
+
+              <h3 className="section-title">Horários de {studioDate}</h3>
               <ul className="slot-list">
-                {slots.map((slot) => <li key={slot.id}><span>{slot.start}</span><span className={slot.available ? "badge available" : "badge"}>{slot.available ? "Livre" : "Indisponível"}</span></li>)}
+                {daySchedule.slots.map((slot) => (
+                  <li key={slot.id}>
+                    <span>{slot.start}</span>
+                    <span className={`badge ${slot.status === "available" ? "available" : ""}`}>
+                      {slot.status === "available" ? "Livre" : slot.status === "appointment" ? "Agendado" : "Bloqueado"}
+                    </span>
+                  </li>
+                ))}
               </ul>
+
+              <div className="block-actions">
+                <button type="button" className="nav-secondary" disabled={busy || studioDate < hoje()} onClick={blockWholeDay}>Bloquear dia inteiro</button>
+                <form className="inline-form" onSubmit={saveBlock}>
+                  <div>
+                    <label htmlFor="block-start">Início do bloqueio</label>
+                    <input id="block-start" type="time" min="08:00" max="21:59" required value={blockForm.start} onChange={(event) => setBlockForm((current) => ({ ...current, start: event.target.value }))} />
+                  </div>
+                  <div>
+                    <label htmlFor="block-end">Término do bloqueio</label>
+                    <input id="block-end" type="time" min="08:01" max="22:00" required value={blockForm.end} onChange={(event) => setBlockForm((current) => ({ ...current, end: event.target.value }))} />
+                  </div>
+                  <button type="submit" disabled={busy || studioDate < hoje()}>Bloquear horário</button>
+                </form>
+              </div>
+
+              <h3 className="section-title">Bloqueios manuais deste dia</h3>
+              {daySchedule.blocks.filter((block) => block.type === "manual").length === 0
+                ? <p className="muted">Nenhum bloqueio manual neste dia.</p>
+                : daySchedule.blocks.filter((block) => block.type === "manual").map((block) => (
+                  <div className="agenda-item block-item" key={block.id}>
+                    <strong>{block.start}–{block.end}{block.start === "08:00" && block.end === "22:00" ? " · Dia inteiro" : ""}</strong>
+                    <button type="button" className="btn-danger compact" disabled={busy} onClick={() => runStudioAction(() => removeScheduleBlock(block.id), "Bloqueio removido.")}>Remover</button>
+                  </div>
+                ))}
             </section>
           )}
 
@@ -316,11 +429,11 @@ export default function App() {
                 <div className="time-fields">
                   <div>
                     <label htmlFor="manual-start">Início</label>
-                    <input id="manual-start" type="time" min="08:00" max="19:59" required value={appointmentForm.start} onChange={(event) => setAppointmentForm((current) => ({ ...current, start: event.target.value }))} />
+                    <input id="manual-start" type="time" min="08:00" max="21:59" required value={appointmentForm.start} onChange={(event) => setAppointmentForm((current) => ({ ...current, start: event.target.value }))} />
                   </div>
                   <div>
                     <label htmlFor="manual-end">Término</label>
-                    <input id="manual-end" type="time" min="08:01" max="20:00" required value={appointmentForm.end} onChange={(event) => setAppointmentForm((current) => ({ ...current, end: event.target.value }))} />
+                    <input id="manual-end" type="time" min="08:01" max="22:00" required value={appointmentForm.end} onChange={(event) => setAppointmentForm((current) => ({ ...current, end: event.target.value }))} />
                   </div>
                 </div>
                 <label htmlFor="manual-description">Observações (opcional)</label>

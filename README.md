@@ -20,6 +20,7 @@ Não publique nem compartilhe `.env.local`. O arquivo está ignorado pelo Git.
 2. Copie o UID mostrado no painel.
 3. Abra `firestore.rules`, substitua `REPLACE_WITH_OWNER_UID` pelo UID copiado e publique o conteúdo na aba **Firestore Database > Regras** no Firebase Console.
 4. O painel carrega os dados depois que as regras forem publicadas. Cadastre os inícios disponíveis em **Horários livres**.
+5. As operações de agenda usam a coleção privada `scheduleDays` para serializar alterações do mesmo dia; as regras dessa coleção também precisam ser publicadas.
 
 As regras deixam públicos somente os inícios disponíveis e o envio de pedidos; nome, telefone, pedidos e agenda ficam restritos ao UID do estúdio. Não publique regras mais permissivas.
 

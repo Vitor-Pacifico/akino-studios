@@ -6,6 +6,10 @@ service cloud.firestore {
         && request.auth.uid == "wiaeztytR3NOTnERIaXRGBzo6eM2";
     }
 
+    match /scheduleDays/{date} {
+      allow read, write: if isOwner();
+    }
+
     match /availability/{slotId} {
       allow read: if true;
       allow create, update, delete: if isOwner();

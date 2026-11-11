@@ -18,6 +18,23 @@ const minutes = (time) => {
 const overlaps = (startA, endA, startB, endB) =>
   minutes(startA) < minutes(endB) && minutes(endA) > minutes(startB);
 
+const scheduleDayRef = (date) => doc(db, "scheduleDays", date);
+
+async function getDayRecords(transaction, date) {
+  await transaction.get(scheduleDayRef(date));
+
+  // Queries are read separately; the shared day document makes same-day writes retry together.
+  const [appointments, availability] = await Promise.all([
+    getDocs(query(collection(db, "appointments"), where("date", "==", date))),
+    getDocs(query(collection(db, "availability"), where("date", "==", date))),
+  ]);
+  return { appointments, availability };
+}
+
+function markDayChanged(transaction, date) {
+  transaction.set(scheduleDayRef(date), { updatedAt: serverTimestamp() }, { merge: true });
+}
+
 export async function getAvailableSlots(date) {
   const result = await getDocs(
     query(collection(db, "availability"), where("date", "==", date), where("available", "==", true)),
@@ -59,21 +76,22 @@ export async function addAvailabilitySlot(date, start) {
   const slotRef = doc(db, "availability", slotId);
 
   await runTransaction(db, async (transaction) => {
-    const [existing, dayAppointments] = await Promise.all([
+    const [existing, dayRecords] = await Promise.all([
       transaction.get(slotRef),
-      transaction.get(query(collection(db, "appointments"), where("date", "==", date))),
+      getDayRecords(transaction, date),
     ]);
     if (existing.exists() && existing.data().available) {
       throw new Error("Esse horário já está na lista de disponíveis.");
     }
 
-    const alreadyBooked = dayAppointments.docs.some((snapshot) => {
+    const alreadyBooked = dayRecords.appointments.docs.some((snapshot) => {
       const appointment = snapshot.data();
       return appointment.status === "confirmed" &&
         minutes(start) >= minutes(appointment.start) && minutes(start) < minutes(appointment.end);
     });
     if (alreadyBooked) throw new Error("Esse início está dentro do período de um agendamento confirmado.");
 
+    markDayChanged(transaction, date);
     transaction.set(slotRef, { date, start, available: true, createdAt: serverTimestamp() });
   });
 }
@@ -81,8 +99,6 @@ export async function addAvailabilitySlot(date, start) {
 export async function submitAppointmentRequest(requestId, end) {
   const requestRef = doc(db, "requests", requestId);
   const appointmentRef = doc(collection(db, "appointments"));
-  const availability = collection(db, "availability");
-  const appointments = collection(db, "appointments");
 
   await runTransaction(db, async (transaction) => {
     const requestSnapshot = await transaction.get(requestRef);
@@ -92,10 +108,9 @@ export async function submitAppointmentRequest(requestId, end) {
 
     const request = requestSnapshot.data();
     const slotRef = doc(db, "availability", request.slotId);
-    const [slotSnapshot, dayAppointments, daySlots] = await Promise.all([
+    const [slotSnapshot, dayRecords] = await Promise.all([
       transaction.get(slotRef),
-      transaction.get(query(appointments, where("date", "==", request.date))),
-      transaction.get(query(availability, where("date", "==", request.date))),
+      getDayRecords(transaction, request.date),
     ]);
 
     if (!slotSnapshot.exists() || !slotSnapshot.data().available) {
@@ -105,7 +120,7 @@ export async function submitAppointmentRequest(requestId, end) {
       throw new Error("Escolha um término depois do início e até as 20:00.");
     }
 
-    const conflicts = dayAppointments.docs.some((snapshot) => {
+    const conflicts = dayRecords.appointments.docs.some((snapshot) => {
       const appointment = snapshot.data();
       return appointment.status === "confirmed" &&
         overlaps(request.start, end, appointment.start, appointment.end);
@@ -130,12 +145,13 @@ export async function submitAppointmentRequest(requestId, end) {
     });
     transaction.update(requestRef, { status: "approved", appointmentId: appointmentRef.id });
 
-    for (const snapshot of daySlots.docs) {
+    for (const snapshot of dayRecords.availability.docs) {
       const slot = snapshot.data();
       if (slot.available && minutes(slot.start) >= minutes(request.start) && minutes(slot.start) < minutes(end)) {
         transaction.update(snapshot.ref, { available: false });
       }
     }
+    markDayChanged(transaction, request.date);
   });
 }
 
@@ -152,22 +168,18 @@ export async function rejectBookingRequest(requestId) {
 
 export async function addManualAppointment(appointment) {
   const appointmentRef = doc(collection(db, "appointments"));
-  const availability = collection(db, "availability");
-  const appointments = collection(db, "appointments");
 
   await runTransaction(db, async (transaction) => {
-    const [dayAppointments, daySlots] = await Promise.all([
-      transaction.get(query(appointments, where("date", "==", appointment.date))),
-      transaction.get(query(availability, where("date", "==", appointment.date))),
-    ]);
+    const dayRecords = await getDayRecords(transaction, appointment.date);
 
-    const conflicts = dayAppointments.docs.some((snapshot) => {
+    const conflicts = dayRecords.appointments.docs.some((snapshot) => {
       const existing = snapshot.data();
       return existing.status === "confirmed" &&
         overlaps(appointment.start, appointment.end, existing.start, existing.end);
     });
     if (conflicts) throw new Error("Esse período conflita com outro agendamento confirmado.");
 
+    markDayChanged(transaction, appointment.date);
     transaction.set(appointmentRef, {
       ...appointment,
       status: "confirmed",
@@ -175,7 +187,7 @@ export async function addManualAppointment(appointment) {
       createdAt: serverTimestamp(),
     });
 
-    for (const snapshot of daySlots.docs) {
+    for (const snapshot of dayRecords.availability.docs) {
       const slot = snapshot.data();
       if (slot.available && minutes(slot.start) >= minutes(appointment.start) && minutes(slot.start) < minutes(appointment.end)) {
         transaction.update(snapshot.ref, { available: false });
@@ -186,8 +198,6 @@ export async function addManualAppointment(appointment) {
 
 export async function cancelAppointment(appointmentId) {
   const appointmentRef = doc(db, "appointments", appointmentId);
-  const appointments = collection(db, "appointments");
-  const availability = collection(db, "availability");
 
   await runTransaction(db, async (transaction) => {
     const snapshot = await transaction.get(appointmentRef);
@@ -196,20 +206,18 @@ export async function cancelAppointment(appointmentId) {
     }
 
     const appointment = snapshot.data();
-    const [dayAppointments, daySlots] = await Promise.all([
-      transaction.get(query(appointments, where("date", "==", appointment.date))),
-      transaction.get(query(availability, where("date", "==", appointment.date))),
-    ]);
+    const dayRecords = await getDayRecords(transaction, appointment.date);
 
+    markDayChanged(transaction, appointment.date);
     transaction.update(appointmentRef, { status: "cancelled" });
 
-    for (const slotSnapshot of daySlots.docs) {
+    for (const slotSnapshot of dayRecords.availability.docs) {
       const slot = slotSnapshot.data();
       if (slot.available || minutes(slot.start) < minutes(appointment.start) || minutes(slot.start) >= minutes(appointment.end)) {
         continue;
       }
 
-      const stillBooked = dayAppointments.docs.some((otherSnapshot) => {
+      const stillBooked = dayRecords.appointments.docs.some((otherSnapshot) => {
         if (otherSnapshot.id === appointmentId) return false;
         const other = otherSnapshot.data();
         return other.status === "confirmed" &&

@@ -4,6 +4,16 @@ import { comprimirImagem } from "../imagem.js";
 export const GALERIA = [
   { id: "harpia-brasileira", src: "/galeria/harpia-brasileira.jpg", name: "Harpia brasileira" },
   { id: "adaga-flamejante", src: "/galeria/adaga-flamejante.jpg", name: "Adaga flamejante" },
+  { id: "Andorinha", src: "/galeria/Andorinha.jpg", name: "Andorinha"},
+  { id: "Black and Grey-Virgem Maria", src: "/galeria/Black and Grey-Virgem Maria.jpg", name: "Black and Grey-Virgem Maria"},
+  { id: "Geisha-Mulher", src: "/galeria/Geisha-Mulher.jpg", name: "Geisha-Mulher"},
+  { id: "Malenia, Blade of Miquella", src: "/galeria/Malenia, Blade of Miquella.jpg", name: "Malenia, Blade of Miquella"},
+  { id: "New School-Hannya", src: "/galeria/New School-Hannya.jpg", name: "New School-Hannya"},
+  { id: "O Gato Lutador de Boxe", src: "/galeria/O Gato Lutador de Boxe.jpg", name: "O Gato Lutador de Boxe"},
+  { id: "O Lobo Uivando com o Sol Vermelho", src: "/galeria/O Lobo Uivando com o Sol Vermelho.jpg", name: "O Lobo Uivando com o Sol Vermelho"},
+  { id: "O Tigre Japonês", src: "/galeria/O Tigre Japonês.jpg", name: "O Tigre Japonês"},
+  { id: "Sailor Girl", src: "/galeria/Sailor Girl.jpg", name: "Sailor Girl"},
+  { id: "Smokign Pin-up", src: "/galeria/Smokign Pin-up.jpg", name: "Smokign Pin-up"},
 ];
 
 export default function Galeria({ value, onChange }) {

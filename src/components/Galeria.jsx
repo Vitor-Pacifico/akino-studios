@@ -1,7 +1,10 @@
 import { useState } from "react";
 import { comprimirImagem } from "../imagem.js";
 
-export const GALERIA = [];
+export const GALERIA = [
+  { id: "harpia-brasileira", src: "/galeria/harpia-brasileira.jpg", name: "Harpia brasileira" },
+  { id: "adaga-flamejante", src: "/galeria/adaga-flamejante.jpg", name: "Adaga flamejante" },
+];
 
 export default function Galeria({ value, onChange }) {
   const [error, setError] = useState("");

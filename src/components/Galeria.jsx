@@ -8,6 +8,7 @@ export const GALERIA = [
 
 export default function Galeria({ value, onChange }) {
   const [error, setError] = useState("");
+  const [previewImage, setPreviewImage] = useState(null);
 
   async function enviar(event) {
     const file = event.target.files?.[0];
@@ -16,12 +17,18 @@ export default function Galeria({ value, onChange }) {
 
     try {
       const src = await comprimirImagem(file);
-      onChange({ type: "upload", src, name: file.name.slice(0, 100) });
+      setPreviewImage({ type: "upload", src, name: file.name.slice(0, 100) });
       setError("");
     } catch (uploadError) {
       console.error("Erro ao preparar imagem de referência:", uploadError);
       setError(uploadError.message || "Não foi possível ler essa imagem.");
     }
+  }
+
+  function confirmImage() {
+    if (!previewImage) return;
+    onChange(previewImage);
+    setPreviewImage(null);
   }
 
   return (
@@ -35,7 +42,7 @@ export default function Galeria({ value, onChange }) {
               className={`gallery-item${value?.src === image.src ? " selected" : ""}`}
               aria-pressed={value?.src === image.src}
               onClick={() => {
-                onChange({ type: "gallery", src: image.src, name: image.name });
+                setPreviewImage({ type: "gallery", src: image.src, name: image.name });
                 setError("");
               }}
             >
@@ -51,7 +58,18 @@ export default function Galeria({ value, onChange }) {
       <label htmlFor="tattoo-reference">Ou envie sua própria referência</label>
       <input id="tattoo-reference" type="file" accept="image/*" onChange={enviar} />
 
-      {value && (
+      {previewImage && (
+        <section className="image-review" aria-live="polite">
+          <h3>Prévia: {previewImage.name}</h3>
+          <img src={previewImage.src} alt={`Prévia da referência: ${previewImage.name}`} />
+          <div className="image-review-actions">
+            <button type="button" onClick={confirmImage}>Confirmar</button>
+            <button type="button" className="nav-secondary" onClick={() => setPreviewImage(null)}>Voltar</button>
+          </div>
+        </section>
+      )}
+
+      {value && !previewImage && (
         <div className="reference-preview">
           <img src={value.src} alt={`Referência selecionada: ${value.name}`} />
           <div>

@@ -132,11 +132,6 @@ export default function App() {
     setForm((current) => ({ ...current, [field]: value }));
   }
 
-  function changeStudioDate(date) {
-    setStudioDate(date);
-    if (date) setCalendarMonth(mesDaData(date));
-  }
-
   function changeCalendarMonth(amount) {
     const next = new Date(calendarMonth.getFullYear(), calendarMonth.getMonth() + amount, 1);
     setCalendarMonth(next);
@@ -317,8 +312,14 @@ export default function App() {
               </section>
 
               <section className="card">
-                <label htmlFor="agenda-date">Ver agenda do dia</label>
-                <input id="agenda-date" type="date" value={studioDate} onChange={(event) => changeStudioDate(event.target.value)} />
+                <h2>Ver agenda do dia</h2>
+                <Calendario
+                  month={calendarMonth}
+                  selectedDate={studioDate}
+                  daysWithBlocks={daysWithBlocks}
+                  onSelectDate={setStudioDate}
+                  onChangeMonth={changeCalendarMonth}
+                />
                 <h2 className="section-title">Agendamentos de {studioDate}</h2>
                 {todaysAppointments.length === 0 && <p className="muted">Nenhum atendimento confirmado neste dia.</p>}
                 {todaysAppointments.map((appointment) => (

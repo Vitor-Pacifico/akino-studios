@@ -449,6 +449,84 @@ input[type=file] {
     color: var(--accent-text)
 }
 
+.calendar-day:disabled {
+    opacity: .4;
+    cursor: not-allowed
+}
+
+.tattoo-gallery {
+    font-family: system-ui, sans-serif
+}
+
+.gallery-label {
+    margin: 12px 0 6px;
+    color: var(--muted);
+    font-size: .85rem
+}
+
+.gallery-grid {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 8px
+}
+
+.gallery-item {
+    width: auto;
+    padding: 0;
+    overflow: hidden;
+    border: 2px solid var(--line);
+    background: var(--surface);
+    color: var(--text);
+    text-align: left
+}
+
+.gallery-item.selected {
+    border-color: var(--accent)
+}
+
+.gallery-item img {
+    display: block;
+    width: 100%;
+    aspect-ratio: 1;
+    object-fit: cover
+}
+
+.gallery-item span {
+    display: block;
+    padding: 7px;
+    font-size: .82rem
+}
+
+.reference-preview {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    margin-top: 12px;
+    overflow-wrap: anywhere
+}
+
+.reference-preview img {
+    width: 100px;
+    height: 100px;
+    object-fit: cover;
+    border: 1px solid var(--line);
+    border-radius: 10px
+}
+
+.reference-preview p {
+    margin: 0 0 8px
+}
+
+.agenda-image {
+    display: block;
+    width: min(100%, 220px);
+    max-height: 220px;
+    margin-top: 8px;
+    object-fit: cover;
+    border: 1px solid var(--line);
+    border-radius: 10px
+}
+
 .block-actions {
     margin-top: 18px;
     padding-top: 6px;

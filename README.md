@@ -25,10 +25,16 @@ Não publique nem compartilhe `.env.local`. O arquivo está ignorado pelo Git.
 
 As regras deixam públicos somente os inícios disponíveis e o envio de pedidos; nome, telefone, pedidos e agenda ficam restritos ao UID do estúdio. Não publique regras mais permissivas.
 
+## Imagens de referência (sem Storage)
+- As imagens da galeria ficam em `public/galeria/` e são publicadas junto com o site. Registre cada arquivo e seu nome na lista `GALERIA`, em `src/components/Galeria.jsx`.
+- O cliente também pode enviar uma imagem própria. Ela é reduzida no navegador e salva no pedido do Firestore; não usa Firebase Storage.
+- Depois de atualizar o código, publique também as regras atualizadas de `firestore.rules` no Firebase Console para permitir o campo opcional `image`.
+- A galeria não inclui imagens de exemplo. Adicione somente imagens que o estúdio tenha autorização para usar. Para adicionar uma nova imagem, coloque o arquivo em `public/galeria/` e inclua em `GALERIA` uma entrada como `{ id: "tattoo-1", src: "/galeria/tattoo-1.jpg", name: "Old School 1" }`.
+
 ## Fluxo
 - O site gera inícios de hora em hora, das 08:00 às 21:00. Um início só aparece livre quando seu intervalo não conflita com um agendamento nem com um bloqueio manual.
 - O estúdio pode bloquear um dia inteiro (08:00–22:00) ou um intervalo específico. Os antigos documentos em `availability` não são mais usados nem apagados.
-- Clientes enviam um pedido para um início disponível. O pedido ainda não reserva o horário. Ao aprovar, o estúdio informa o término até as 22:00; a transação recusa conflitos e publica somente o intervalo ocupado, sem nome ou contato.
+- Clientes enviam um pedido para um início disponível, com uma imagem opcional da galeria ou enviada por eles. O pedido ainda não reserva o horário. Ao aprovar, o estúdio informa o término até as 22:00; a transação recusa conflitos e publica somente o intervalo ocupado, sem nome ou contato.
 - O estúdio pode cadastrar atendimentos recebidos por fora do site e cancelar atendimentos existentes.
 - Pedidos recusados ou horários cancelados não são apagados do histórico.
 

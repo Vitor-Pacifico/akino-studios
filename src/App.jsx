@@ -13,6 +13,7 @@ import {
   submitAppointmentRequest,
 } from "./agenda.js";
 import Ajuda from "./components/Ajuda.jsx";
+import Calendario from "./components/Calendario.jsx";
 import Formulario from "./components/Formulario.jsx";
 import { ESTILOS, LOCAIS, TAMANHOS } from "./data.js";
 
@@ -29,8 +30,6 @@ const mesDaData = (date) => {
 const chaveData = (year, month, day) =>
   `${year}-${String(month).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
 
-const diasSemana = ["Dom", "Seg", "Ter", "Qua", "Qui", "Sex", "Sáb"];
-
 const inicial = {
   nome: "",
   tel: "",
@@ -38,6 +37,7 @@ const inicial = {
   local: LOCAIS[0],
   tam: TAMANHOS[0],
   desc: "",
+  imagem: null,
   data: "",
   hora: "",
 };
@@ -117,17 +117,6 @@ export default function App() {
       .catch((loadError) => { if (active) setError(mensagemErro(loadError)); });
     return () => { active = false; };
   }, [user, calendarMonth, refresh]);
-
-  const calendarDays = useMemo(() => {
-    const year = calendarMonth.getFullYear();
-    const month = calendarMonth.getMonth();
-    const leadingDays = new Date(year, month, 1).getDay();
-    const daysInMonth = new Date(year, month + 1, 0).getDate();
-    return [
-      ...Array(leadingDays).fill(null),
-      ...Array.from({ length: daysInMonth }, (_, index) => chaveData(year, month + 1, index + 1)),
-    ];
-  }, [calendarMonth]);
 
   const daysWithBlocks = useMemo(
     () => new Set(monthBlocks.map((block) => block.date)),
@@ -315,6 +304,7 @@ export default function App() {
                       <p>{request.date} às {request.start} · {request.phone}</p>
                       <p>{request.style} · {request.location} · {request.size}</p>
                       {request.description && <p>{request.description}</p>}
+                      {request.image && <img className="agenda-image" src={request.image.src} alt={`Referência de tatuagem: ${request.image.name}`} />}
                     </div>
                     <div className="request-actions">
                       <label htmlFor={`end-${request.id}`}>Término estimado</label>
@@ -338,6 +328,7 @@ export default function App() {
                       {appointment.phone && <p>{appointment.phone}</p>}
                       {appointment.style && <p>{appointment.style} · {appointment.location} · {appointment.size}</p>}
                       {appointment.description && <p>{appointment.description}</p>}
+                      {appointment.image && <img className="agenda-image" src={appointment.image.src} alt={`Referência de tatuagem: ${appointment.image.name}`} />}
                       <span className="badge">{appointment.source === "online" ? "Pedido do site" : "Cadastro manual"}</span>
                     </div>
                     <button type="button" className="btn-danger compact" disabled={busy} onClick={() => {
@@ -355,27 +346,13 @@ export default function App() {
             <section className="card">
               <h2>Agenda e bloqueios</h2>
               <p className="muted">Os inícios são gerados automaticamente de hora em hora, das 08:00 às 21:00. Agendamentos e bloqueios deixam os intervalos correspondentes indisponíveis.</p>
-              <div className="calendar-heading">
-                <button type="button" className="nav-secondary calendar-arrow" aria-label="Mês anterior" onClick={() => changeCalendarMonth(-1)}>‹</button>
-                <h3>{calendarMonth.toLocaleDateString("pt-BR", { month: "long", year: "numeric" })}</h3>
-                <button type="button" className="nav-secondary calendar-arrow" aria-label="Próximo mês" onClick={() => changeCalendarMonth(1)}>›</button>
-              </div>
-              <div className="calendar-grid" role="group" aria-label="Calendário do mês">
-                {diasSemana.map((day) => <span className="calendar-weekday" key={day}>{day}</span>)}
-                {calendarDays.map((date, index) => date ? (
-                  <button
-                    type="button"
-                    key={date}
-                    className={`calendar-day${studioDate === date ? " selected" : ""}${daysWithBlocks.has(date) ? " has-blocks" : ""}`}
-                    aria-pressed={studioDate === date}
-                    aria-label={`${date}${daysWithBlocks.has(date) ? ", com horários ocupados ou bloqueados" : ""}`}
-                    onClick={() => setStudioDate(date)}
-                  >
-                    {Number(date.slice(-2))}
-                    {daysWithBlocks.has(date) && <span aria-hidden="true">•</span>}
-                  </button>
-                ) : <span className="calendar-empty" key={`empty-${index}`} />)}
-              </div>
+              <Calendario
+                month={calendarMonth}
+                selectedDate={studioDate}
+                daysWithBlocks={daysWithBlocks}
+                onSelectDate={setStudioDate}
+                onChangeMonth={changeCalendarMonth}
+              />
 
               <h3 className="section-title">Horários de {studioDate}</h3>
               <ul className="slot-list">

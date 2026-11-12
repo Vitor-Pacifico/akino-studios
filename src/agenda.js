@@ -202,6 +202,7 @@ export async function submitAppointmentRequest(requestId, end) {
       location: request.location,
       size: request.size,
       description: request.description,
+      ...(request.image ? { image: request.image } : {}),
       date: request.date,
       start: request.start,
       end,

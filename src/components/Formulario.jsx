@@ -1,6 +1,9 @@
-import { useEffect, useState } from "react";
-import { createBookingRequest, getAvailableSlots } from "../agenda.js";
+import { useEffect, useMemo, useState } from "react";
+import { createBookingRequest, getAvailableSlots, getBlocksForMonth } from "../agenda.js";
 import { ESTILOS, LOCAIS, TAMANHOS } from "../data.js";
+import { gerarHorarios } from "../horarios.js";
+import Calendario from "./Calendario.jsx";
+import Galeria from "./Galeria.jsx";
 
 const hoje = () => {
   const date = new Date();
@@ -8,12 +11,64 @@ const hoje = () => {
 };
 
 export default function Formulario({ form, set }) {
+  const [calendarMonth, setCalendarMonth] = useState(() => {
+    const now = new Date();
+    return new Date(now.getFullYear(), now.getMonth(), 1);
+  });
+  const [monthBlocks, setMonthBlocks] = useState([]);
+  const [loadingMonth, setLoadingMonth] = useState(false);
+  const [calendarError, setCalendarError] = useState("");
   const [slots, setSlots] = useState([]);
   const [loadingSlots, setLoadingSlots] = useState(false);
   const [sending, setSending] = useState(false);
   const [error, setError] = useState("");
   const [success, setSuccess] = useState("");
   const [consent, setConsent] = useState(false);
+
+  useEffect(() => {
+    let active = true;
+    setLoadingMonth(true);
+    setCalendarError("");
+    getBlocksForMonth(calendarMonth.getFullYear(), calendarMonth.getMonth() + 1)
+      .then((blocks) => { if (active) setMonthBlocks(blocks); })
+      .catch((loadError) => {
+        console.error("Erro ao carregar bloqueios do calendário:", loadError);
+        if (active) setCalendarError("Não foi possível carregar o calendário. Tente novamente.");
+      })
+      .finally(() => { if (active) setLoadingMonth(false); });
+    return () => { active = false; };
+  }, [calendarMonth]);
+
+  const daysWithBlocks = useMemo(
+    () => new Set(monthBlocks.map((block) => block.date)),
+    [monthBlocks],
+  );
+  const unavailableDates = useMemo(() => {
+    const blocksByDate = new Map();
+    monthBlocks.forEach((block) => {
+      const blocks = blocksByDate.get(block.date) || [];
+      blocks.push(block);
+      blocksByDate.set(block.date, blocks);
+    });
+
+    return new Set([...blocksByDate].filter(([, blocks]) => {
+      return gerarHorarios().every((start) => {
+        const end = `${String(Number(start.slice(0, 2)) + 1).padStart(2, "0")}:00`;
+        return blocks.some((block) => start < block.end && end > block.start);
+      });
+    }).map(([date]) => date));
+  }, [monthBlocks]);
+
+  function changeCalendarMonth(amount) {
+    setCalendarMonth((current) => new Date(current.getFullYear(), current.getMonth() + amount, 1));
+  }
+
+  function selectDate(date) {
+    set("data", date);
+    set("hora", "");
+    const [year, month] = date.split("-").map(Number);
+    setCalendarMonth(new Date(year, month - 1, 1));
+  }
 
   useEffect(() => {
     let active = true;
@@ -64,6 +119,7 @@ export default function Formulario({ form, set }) {
         location: form.local,
         size: form.tam,
         description: form.desc.trim(),
+        ...(form.imagem ? { image: form.imagem } : {}),
         date: form.data,
         start: slot.start,
         slotId: slot.id,
@@ -72,6 +128,7 @@ export default function Formulario({ form, set }) {
       set("nome", "");
       set("tel", "");
       set("desc", "");
+      set("imagem", null);
       set("hora", "");
     } catch (requestError) {
       console.error("Erro ao enviar pedido de agendamento:", requestError);
@@ -107,12 +164,25 @@ export default function Formulario({ form, set }) {
         </select>
         <label htmlFor="desc">Descreva sua ideia</label>
         <textarea id="desc" maxLength={2000} placeholder="Referências, cores, detalhes…" value={form.desc} onChange={(event) => set("desc", event.target.value)} />
+        <p className="gallery-label">Imagem de referência</p>
+        <Galeria value={form.imagem} onChange={(image) => set("imagem", image)} />
       </div>
 
       <div className="card">
         <h2>Data e horário</h2>
-        <label htmlFor="data">Escolha o dia</label>
-        <input id="data" type="date" min={hoje()} required value={form.data} onChange={(event) => { set("data", event.target.value); set("hora", ""); }} />
+        <label>Escolha o dia</label>
+        <Calendario
+          month={calendarMonth}
+          selectedDate={form.data}
+          daysWithBlocks={daysWithBlocks}
+          disabledDates={unavailableDates}
+          minDate={hoje()}
+          onSelectDate={selectDate}
+          onChangeMonth={changeCalendarMonth}
+        />
+        {loadingMonth && <p className="muted" role="status">Carregando disponibilidade…</p>}
+        {calendarError && <p className="err" role="alert">{calendarError}</p>}
+        <p className="muted">Dias com horários ocupados aparecem marcados. Dias sem horários livres não podem ser selecionados.</p>
         <label htmlFor="hora">Horário disponível</label>
         <select id="hora" required value={form.hora} disabled={!form.data || loadingSlots || slots.length === 0} onChange={(event) => set("hora", event.target.value)}>
           <option value="">{loadingSlots ? "Carregando horários…" : slots.length ? "Selecione um horário" : "Sem horários disponíveis nesta data"}</option>
